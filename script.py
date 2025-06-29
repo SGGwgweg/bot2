@@ -1,0 +1,95 @@
+import os
+import time
+
+import requests
+from bs4 import BeautifulSoup
+
+# Словарь авторов и их URL для мониторинга
+AUTHORS = {
+    'blobcg': 'https://rule34.xyz/blobcg',
+    'croove': 'https://rule34.xyz/croove',
+    'giddora': 'https://rule34.xyz/giddora',
+    'anna_anon': 'https://rule34.xyz/anna_anon',
+}
+
+CHECK_INTERVAL = 300  # секунд между проверками
+BOT_TOKEN = '8118312308:AAFB79HimMN01tCPTLQ2nnOHpJfZzg1lv5s'
+CHAT_ID = '1812059915'
+
+
+def get_latest_post_url(model_url):
+    resp = requests.get(model_url)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    container = soup.find('div', class_='box-grid')
+    if not container:
+        return None
+    first_link = container.find('a', class_='box')
+    if not first_link or not first_link.get('href'):
+        return None
+    return requests.compat.urljoin(model_url, first_link['href'])
+
+
+def load_last_seen(path):
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            return f.read().strip()
+    return None
+
+
+def save_last_seen(path, url):
+    with open(path, 'w') as f:
+        f.write(url)
+
+
+def send_telegram_message(text):
+    if not text or not text.strip():
+        return
+    url = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
+    payload = {'chat_id': CHAT_ID, 'text': text, 'disable_web_page_preview': True}
+    try:
+        resp = requests.post(url, data=payload)
+        data = resp.json()
+        if not data.get('ok'):
+            print('Telegram error:', data.get('description'))
+    except Exception as e:
+        print('Failed to send Telegram message:', e)
+
+
+if __name__ == '__main__':
+    # Инициализация last_seen и отправка стартового сообщения
+    last_seen = {}
+    first_run = False
+    for author in AUTHORS:
+        path = f'last_seen_{author}.txt'
+        val = load_last_seen(path)
+        if val is None:
+            first_run = True
+        last_seen[author] = val
+
+    if first_run:
+        # При первом запуске сохраняем текущее состояние, но не шлём уведомления о новых
+        for author, url in AUTHORS.items():
+            latest = get_latest_post_url(url)
+            if latest:
+                save_last_seen(f'last_seen_{author}.txt', latest)
+                last_seen[author] = latest
+        send_telegram_message('Bot activated and baseline established.')
+
+    # Основной цикл
+    while True:
+        for author, url in AUTHORS.items():
+            try:
+                latest = get_latest_post_url(url)
+                if not latest:
+                    continue
+                if last_seen.get(author) != latest:
+                    message = f'New post by {author}: {latest}'
+                    send_telegram_message(message)
+                    save_last_seen(f'last_seen_{author}.txt', latest)
+                    last_seen[author] = latest
+            except Exception as e:
+                err_msg = f'Error checking {author}: {e}'
+                print(err_msg)
+                send_telegram_message(err_msg)
+        time.sleep(CHECK_INTERVAL)
