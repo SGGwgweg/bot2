@@ -1,10 +1,8 @@
 import os
 import time
-
 import requests
 from bs4 import BeautifulSoup
 
-# Словарь авторов и их URL для мониторинга
 AUTHORS = {
     'blobcg': 'https://rule34.xyz/blobcg',
     'croove': 'https://rule34.xyz/croove',
@@ -12,10 +10,9 @@ AUTHORS = {
     'anna_anon': 'https://rule34.xyz/anna_anon',
 }
 
-CHECK_INTERVAL = 300  # секунд между проверками
+CHECK_INTERVAL = 300
 BOT_TOKEN = '8118312308:AAFB79HimMN01tCPTLQ2nnOHpJfZzg1lv5s'
 CHAT_ID = '1812059915'
-
 
 def get_latest_post_url(model_url):
     resp = requests.get(model_url)
@@ -29,18 +26,18 @@ def get_latest_post_url(model_url):
         return None
     return requests.compat.urljoin(model_url, first_link['href'])
 
-
 def load_last_seen(path):
     if os.path.exists(path):
         with open(path, 'r') as f:
             return f.read().strip()
     return None
 
-
 def save_last_seen(path, url):
-    with open(path, 'w') as f:
-        f.write(url)
-
+    if os.path.exists(path):
+        with open(path, 'w') as f:
+            f.write(url)
+    else:
+        print(f"[INFO] Not saving '{path}' — file does not exist yet.")
 
 def send_telegram_message(text):
     if not text or not text.strip():
@@ -55,28 +52,29 @@ def send_telegram_message(text):
     except Exception as e:
         print('Failed to send Telegram message:', e)
 
-
 if __name__ == '__main__':
-    # Инициализация last_seen и отправка стартового сообщения
     last_seen = {}
-    first_run = False
+    all_files_exist = True
+
+    # Проверка: существуют ли все необходимые файлы
     for author in AUTHORS:
         path = f'last_seen_{author}.txt'
-        val = load_last_seen(path)
-        if val is None:
-            first_run = True
-        last_seen[author] = val
+        if not os.path.exists(path):
+            print(f"[ERROR] Missing file: {path}")
+            all_files_exist = False
 
-    if first_run:
-        # При первом запуске сохраняем текущее состояние, но не шлём уведомления о новых
-        for author, url in AUTHORS.items():
-            latest = get_latest_post_url(url)
-            if latest:
-                save_last_seen(f'last_seen_{author}.txt', latest)
-                last_seen[author] = latest
-        send_telegram_message('Bot activated and baseline established.')
+    if not all_files_exist:
+        send_telegram_message("Bot error: not all required .txt files found. Exiting.")
+        print("[FATAL] Required files missing. Bot is exiting.")
+        exit(1)
 
-    # Основной цикл
+    # Загрузка предыдущих ссылок
+    for author in AUTHORS:
+        path = f'last_seen_{author}.txt'
+        last_seen[author] = load_last_seen(path)
+
+    send_telegram_message('Bot re-activated and monitoring started.')
+
     while True:
         for author, url in AUTHORS.items():
             try:
